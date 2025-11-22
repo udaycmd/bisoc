@@ -7,6 +7,17 @@ import (
 
 type opcode byte
 
+// The wsConn type represents a WebSocket connection.
+type wsConn struct {
+	raw      *net.Conn
+	rw       *bufio.ReadWriter
+	isServer bool
+}
+
+const (
+	framePayloadMaxSize = 1024 * 1 // 1 Kilobyte
+)
+
 const (
 	op_cont  opcode = 0x0
 	op_text  opcode = 0x1
@@ -16,18 +27,6 @@ const (
 	op_pong  opcode = 0xA
 )
 
-const (
-	fragmentMaxSize = 1024 * 1 // 1 Kilobyte
-)
-
-type Bisoc struct {
-	conn *net.TCPConn
-	rw   *bufio.ReadWriter
-}
-
-func BisocCreate(tcpConn *net.TCPConn) *Bisoc {
-	return &Bisoc{
-		conn: tcpConn,
-		rw:   bufio.NewReadWriter(bufio.NewReader(tcpConn), bufio.NewWriter(tcpConn)),
-	}
+func (ws *wsConn) RawConn() *net.Conn {
+	return ws.raw
 }

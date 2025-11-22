@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-func (bisoc *Bisoc) checkClientHandshake(origins []string) error {
-	tp := textproto.NewReader(bisoc.rw.Reader)
+func (ws *wsConn) checkClientHandshake(origins []string) error {
+	tp := textproto.NewReader(ws.rw.Reader)
 
 	rl, err := tp.ReadLine()
 	if err != nil {
@@ -52,11 +52,11 @@ func (bisoc *Bisoc) checkClientHandshake(origins []string) error {
 	respBuff.WriteString("Sec-WebSocket-Accept: " + accept + "\r\n")
 	respBuff.WriteString("\r\n")
 
-	if _, err := bisoc.rw.Writer.Write(respBuff.Bytes()); err != nil {
+	if _, err := ws.rw.Writer.Write(respBuff.Bytes()); err != nil {
 		return err
 	}
 
-	return bisoc.rw.Writer.Flush()
+	return ws.rw.Writer.Flush()
 }
 
 func computeAccept(key string) string {
@@ -64,50 +64,4 @@ func computeAccept(key string) string {
 	hasher := sha1.New()
 	hasher.Write([]byte(key + GUID))
 	return base64.StdEncoding.EncodeToString(hasher.Sum(nil))
-}
-
-func (bisoc *Bisoc) sendMsg(payload []byte, msgType opcode) error {
-	if msgType != op_bin && msgType != op_text {
-		return errInvalidMsgKind
-	}
-	payloadLen := len(payload)
-	isFirst := true
-
-	for {
-		var op opcode
-		frameLen := min(payloadLen, fragmentMaxSize)
-
-		fin := (payloadLen - frameLen) == 0
-		if isFirst {
-			op = msgType
-		} else {
-			op = op_cont
-		}
-
-		if err := sendFrame(bisoc.rw.Writer, &frameHeader{fin: fin, op: op, Len: uint64(frameLen)}, payload[:frameLen]); err != nil {
-			return nil
-		}
-
-		payload = payload[frameLen:]
-		payloadLen -= frameLen
-		isFirst = false
-
-		if payloadLen <= 0 {
-			break
-		}
-	}
-
-	return nil
-}
-
-func (bisoc *Bisoc) readMsg() error {
-
-	for {
-		fh := &frameHeader{}
-		if err := fh.readFrameHeaderInto(bisoc.rw.Reader); err != nil {
-			return err
-		}
-
-		break
-	}
 }

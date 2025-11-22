@@ -2,12 +2,11 @@ package bisoc
 
 import "errors"
 
-type bisocError interface {
-	error
-}
-
 var (
-	errClientHandshake bisocError = errors.New("client handshake rejected")
-	errServerHandshake bisocError = errors.New("server handshake rejected")
-	errInvalidMsgKind  bisocError = errors.New("incorrect message type")
+	errClientHandshake           = errors.New("client handshake rejected")
+	errServerHandshake           = errors.New("server handshake rejected")
+	errInvalidMsgKind            = errors.New("incorrect message type")
+	errUnexpectedOpcode          = errors.New("unexpected opcode received")
+	errIllegalControlFrame       = errors.New("illegal control frame")
+	errFrameRsvBitsNotNegotiated = errors.New("rsv bits not negotiated")
 )
