@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -72,6 +73,54 @@ func (wss *Server) tryUpgrade(w http.ResponseWriter, r *http.Request) (*Conn, er
 		return nil, wss.error(w, http.StatusInternalServerError, "hijack: "+err.Error())
 	}
 
+	// cleanup
+	defer func() {
+		if tcpConn != nil {
+			_ = tcpConn.Close()
+		}
+	}()
+
+	if wss.handshakeTimeout > 0 {
+		if err := tcpConn.SetWriteDeadline(time.Now().Add(wss.handshakeTimeout)); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := tcpConn.SetDeadline(time.Time{}); err != nil {
+			return nil, err
+		}
+	}
+
+	// Write all headers to tcpConn
+
+	tcpConn = nil
+	return nil, nil
+}
+
+func (wss *Server) selectSubProtocol(r *http.Request) string {
+	if wss.Subprotocols != nil {
+		clientProtocols := subProtocols(r)
+		for _, cp := range clientProtocols {
+			for _, sp := range wss.Subprotocols {
+				if cp == sp {
+					return cp
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+func subProtocols(r *http.Request) []string {
+	header := strings.TrimSpace(r.Header.Get("Sec-Websocket-Protocol"))
+	if header == "" {
+		return nil
+	}
+	protocols := strings.Split(header, ",")
+	for i := range protocols {
+		protocols[i] = strings.TrimSpace(protocols[i])
+	}
+	return protocols
 }
 
 // Generate 'Sec-WebSocket-Accept' by concatenating the challengeKey with
