@@ -1,7 +1,7 @@
 package bisoc
 
 // Globally Unique Identifier (GUID) used for generating
-// 'Sec-WebSocket-Accept' during initial handshake.
+// 'Sec-WebSocket-Accept' by server during initial handshake.
 // Described in RFC 6455 (Section 1.3).
 var KEY_GUID = []byte("258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
 
@@ -27,4 +27,28 @@ const (
 	// PongMsg is a pong control message.
 	// Described in RFC 6455 (Section 5.5.3).
 	PongMsg = 0xA
+)
+
+const (
+	// Frame header (0th byte) bit definations, described in RFC 6455 (Section 5.2)
+	fin  = 1 << 7
+	rsv1 = 1 << 6
+	rsv2 = 1 << 5
+	rsv3 = 1 << 4
+
+	// Frame header (1st byte) bit defination, described in RFC 6455 (Section 5.2)
+	ismasked = 1 << 7
+
+	// All control frames MUST have a payload length of 125 bytes or less and MUST NOT be fragmented.
+	maxControlFramePayloadSize = 125
+
+	// Maximum frame header size in bytes i.e Fixed(2) + Payload Length(8) + Masking Key(4).
+	maxFrameHeaderSize = 14
+
+	// 0 denotes a continuation frame
+	continuation = 0x0
+)
+
+const (
+	badHandShake = "bisoc: illegal handshake by client: "
 )
