@@ -51,4 +51,9 @@ const (
 
 const (
 	badHandShake = "bisoc: illegal handshake by client: "
+
+	MinBufSize = 512
+
+	ReadBufSize  = 4096
+	WriteBufSize = 4096
 )

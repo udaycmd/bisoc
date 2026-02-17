@@ -5,31 +5,33 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"math/rand"
 	"net"
-	"sync"
-	"time"
 )
 
-// WSConn represents a WebSocket connection.
-// It is safe for concurrent use by multiple goroutines for writing,
-// but allows only one concurrent reader.
+// Conn represents a WebSocket connection.
 type Conn struct {
-	conn    net.Conn
-	client  bool
-	br      *bufio.Reader
-	writeMu sync.Mutex // Ensures thread-safety for WriteMessage
-	rng     *rand.Rand // Random number generator for masking
+	conn        net.Conn
+	client      bool
+	subprotocol string
+	writeBuf    []byte
+	br          *bufio.Reader
 }
 
-// NewConn creates a new WebSocket connection wrapper.
-// It assumes the handshake has already been completed.
-func NewConn(conn net.Conn, isClient bool) *WSConn {
-	return &WSConn{
-		conn:   conn,
-		br:     bufio.NewReader(conn),
-		rng:    rand.New(rand.NewSource(time.Now().UnixNano())),
-		client: isClient,
+// newConn creates a new WebSocket connection [Conn].
+func newConn(conn net.Conn, isClient bool, br *bufio.Reader, writeBuf []byte) *Conn {
+	if br == nil {
+		br = bufio.NewReaderSize(conn, ReadBufSize)
+	}
+
+	if writeBuf == nil {
+		writeBuf = make([]byte, WriteBufSize)
+	}
+
+	return &Conn{
+		conn:     conn,
+		client:   isClient,
+		br:       br,
+		writeBuf: writeBuf,
 	}
 }
 
