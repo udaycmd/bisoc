@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -24,7 +25,7 @@ type Server struct {
 	Subprotocols []string
 }
 
-// Accept accepts a connectiona and upgrades it to a WebSocket Connection.
+// Accept accepts a connection and upgrades it to a WebSocket Connection.
 func (wss *Server) Accept(w http.ResponseWriter, r *http.Request) (*Conn, error) {
 	c, err := wss.upgrade(w, r)
 	if err != nil {
@@ -168,10 +169,8 @@ func (wss *Server) selectSubProtocol(r *http.Request) string {
 	if wss.Subprotocols != nil {
 		clientProtocols := subProtocols(r)
 		for _, cp := range clientProtocols {
-			for _, sp := range wss.Subprotocols {
-				if cp == sp {
-					return cp
-				}
+			if slices.Contains(wss.Subprotocols, cp) {
+				return cp
 			}
 		}
 	}

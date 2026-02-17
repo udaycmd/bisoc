@@ -52,8 +52,30 @@ const (
 const (
 	badHandShake = "bisoc: illegal handshake by client: "
 
+	// Minimum read and write buffer sizes
 	MinBufSize = 512
 
-	ReadBufSize  = 4096
+	// Default Read buffer size
+	ReadBufSize = 4096
+
+	// Default Write buffer size
 	WriteBufSize = 4096
+)
+
+// Connection Close Code Numbers as described in RFC 6455 (Section 11.7).
+const (
+	StatusNormalClosure           = 1000
+	StatusGoingAway               = 1001
+	StatusProtocolError           = 1002
+	StatusUnsupportedData         = 1003
+	StatusNoStatusReceived        = 1005
+	StatusAbnormalClosure         = 1006
+	StatusInvalidFramePayloadData = 1007
+	StatusPolicyViolation         = 1008
+	StatusMessageTooBig           = 1009
+	StatusMandatoryExtension      = 1010
+	StatusInternalServerError     = 1011
+	StatusServiceRestart          = 1012
+	StatusTryAgainLater           = 1013
+	StatusTLSHandshake            = 1015
 )
