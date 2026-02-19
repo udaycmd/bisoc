@@ -60,6 +60,9 @@ const (
 
 	// Default Write buffer size
 	WriteBufSize = 4096
+
+	// Max Size of message payload (64 MB)
+	ReadLimit = 67108864
 )
 
 // Connection Close Code Numbers as described in RFC 6455 (Section 11.7).
