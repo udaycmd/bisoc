@@ -2,6 +2,7 @@ package bisoc
 
 import (
 	"bufio"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -49,7 +50,7 @@ func (e *CloseError) Error() string {
 }
 
 func isControlFrame(i int) bool {
-	return i == BinMsg || i == TextMsg
+	return i >= CloseMsg && i <= PongMsg
 }
 
 // Conn represents a WebSocket connection.
@@ -63,13 +64,32 @@ type Conn struct {
 	reader      io.Reader
 }
 
+// newConn creates a new WebSocket connection [Conn].
+func newConn(conn net.Conn, isClient bool, br *bufio.Reader, writeBuf []byte) *Conn {
+	if br == nil {
+		br = bufio.NewReaderSize(conn, ReadBufSize)
+	}
+
+	if writeBuf == nil {
+		writeBuf = make([]byte, WriteBufSize)
+	}
+
+	return &Conn{
+		conn:      conn,
+		client:    isClient,
+		br:        br,
+		writeBuf:  writeBuf,
+		readLimit: ReadLimit,
+	}
+}
+
 // msgReader helps stream a connection with fragmented messages
 type msgReader struct {
 	c         *Conn
 	totalRead int
 	remain    int
 	eof       bool
-	mask      [4]byte
+	mask      []byte
 	maskPos   int
 }
 
@@ -97,9 +117,11 @@ func (mr *msgReader) Read(p []byte) (int, error) {
 			return 0, &CloseError{Code: StatusMessageTooBig}
 		}
 
-		for i := range n {
-			p[i] ^= mr.mask[mr.maskPos%4]
-			mr.maskPos++
+		if mr.mask != nil {
+			for i := range n {
+				p[i] ^= mr.mask[mr.maskPos%4]
+				mr.maskPos++
+			}
 		}
 
 		mr.remain -= n
@@ -110,8 +132,7 @@ func (mr *msgReader) Read(p []byte) (int, error) {
 
 func (mr *msgReader) nextFrame() error {
 	for {
-		var header [2]byte
-		_, err := io.ReadFull(mr.c.br, header[:])
+		header, err := mr.c.readHeader(2)
 		if err != nil {
 			return err
 		}
@@ -130,28 +151,44 @@ func (mr *msgReader) nextFrame() error {
 		}
 
 		mr.eof = (header[0] & fin) == 1
-		// TODO: Read payload len, mask key.
-		return nil
+		len, mask, err := mr.c.readExtensions(header)
+		mr.remain, mr.mask, mr.maskPos = int(len), mask, 0
+		return err
 	}
 }
 
-// newConn creates a new WebSocket connection [Conn].
-func newConn(conn net.Conn, isClient bool, br *bufio.Reader, writeBuf []byte) *Conn {
-	if br == nil {
-		br = bufio.NewReaderSize(conn, ReadBufSize)
+// readHeader reads n bytes from the underlying connection
+func (ws *Conn) readHeader(n int) ([]byte, error) {
+	header := make([]byte, n)
+	_, err := io.ReadFull(ws.br, header)
+	return header, err
+}
+
+// readExtensions reads the extended header fields
+func (ws *Conn) readExtensions(header []byte) (uint64, []byte, error) {
+	var err error
+	var ext []byte
+	var mask []byte
+	l := uint64(header[1] & 0x7F)
+
+	switch l {
+	case 126:
+		ext, err = ws.readHeader(2)
+		l = uint64(binary.BigEndian.Uint16(ext))
+	case 127:
+		ext, err = ws.readHeader(8)
+		l = binary.BigEndian.Uint64(ext)
 	}
 
-	if writeBuf == nil {
-		writeBuf = make([]byte, WriteBufSize)
+	if err != nil {
+		return 0, nil, err
 	}
 
-	return &Conn{
-		conn:      conn,
-		client:    isClient,
-		br:        br,
-		writeBuf:  writeBuf,
-		readLimit: ReadLimit,
+	if (header[1] & ismasked) == 1 {
+		mask, err = ws.readHeader(4)
 	}
+
+	return l, mask, err
 }
 
 // Sends a websocket message to the connected peer.
@@ -172,7 +209,38 @@ func (ws *Conn) RecvMsg() (int, []byte, error) {
 		ws.reader = nil
 	}
 
-	return 0, nil, nil
+	header, err := ws.readHeader(2)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	final := (header[0] & fin) == 1
+	opcode := int(header[0] & 0x0F)
+
+	if isControlFrame(opcode) {
+		// TODO: handle this properly
+		// p, err := ws.readPayload(header)
+		// if err != nil {
+		// return 0, nil, err
+		// }
+		// return c.handleControl(opcode, p)
+	}
+
+	len, mask, err := ws.readExtensions(header)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	ws.reader = &msgReader{
+		c:      ws,
+		eof:    final,
+		remain: int(len),
+		mask:   mask,
+	}
+
+	payload, err := io.ReadAll(ws.reader)
+	ws.reader = nil
+	return opcode, payload, err
 }
 
 func (ws *Conn) handleControlFrame() (int, []byte, error) {
