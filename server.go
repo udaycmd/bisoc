@@ -46,7 +46,7 @@ func (wss *Server) upgrade(w http.ResponseWriter, r *http.Request) (*Conn, error
 		return nil, wss.error(w, http.StatusMethodNotAllowed, badHandShake+"request method is not GET")
 	}
 
-	if r.Header.Get("Connection") != "Upgrade" {
+	if r.Header.Get("Connection") != "upgrade" {
 		return nil, wss.error(w, http.StatusBadRequest, badHandShake+"'Connection' header of the request does not contains 'upgrade'")
 	}
 
@@ -116,7 +116,7 @@ func (wss *Server) upgrade(w http.ResponseWriter, r *http.Request) (*Conn, error
 		writeBuf = buf
 	}
 
-	c := newConn(rawConn, true, br, writeBuf)
+	c := newConn(rawConn, false, br, writeBuf)
 	c.subprotocol = subprotocol
 
 	respBuf := buf

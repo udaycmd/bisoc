@@ -37,7 +37,7 @@ const (
 	rsv3 = 1 << 4
 
 	// Frame header (1st byte) bit defination, described in RFC 6455 (Section 5.2)
-	ismasked = 1 << 7
+	masked = 1 << 7
 
 	// All control frames MUST have a payload length of 125 bytes or less and MUST NOT be fragmented.
 	maxControlFramePayloadSize = 125
@@ -63,6 +63,9 @@ const (
 
 	// Max Size of message payload (64 MB)
 	ReadLimit = 67108864
+
+	// Max consecutive empty continuation frames before connection is dropped
+	maxEmptyFrames = 10
 )
 
 // Connection Close Code Numbers as described in RFC 6455 (Section 11.7).
