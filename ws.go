@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"time"
+	"unicode/utf8"
 )
 
 type CloseError struct {
@@ -264,6 +265,26 @@ func (ws *Conn) RecvMsg() (int, []byte, error) {
 
 		payload, err := io.ReadAll(ws.reader)
 		ws.reader = nil
+		if err != nil {
+			return 0, nil, err
+		}
+
+		// RFC 6455 (Section 8.1)
+		//
+		// When an endpoint is to interpret a byte stream as UTF-8 but finds
+		// that the byte stream is not, in fact, a valid UTF-8 stream, that
+		// endpoint must fail the connection.
+		//
+		// Implementation Note: I am only validating this at a message boundary
+		// and not at every chunk/frame due to induced complexity of the procedure
+		// which is infact is not strictly inforced by the standard.
+		if opcode == TextMsg && !utf8.Valid(payload) {
+			return 0, nil, &CloseError{
+				Code:   StatusInvalidFramePayloadData,
+				Reason: "invalid utf8 encoded text",
+			}
+		}
+
 		return opcode, payload, err
 	}
 }
@@ -322,7 +343,17 @@ func (ws *Conn) readExtensions(header []byte) (uint64, []byte, error) {
 		return 0, nil, &CloseError{Code: StatusMessageTooBig}
 	}
 
-	if (header[1] & masked) != 0 {
+	ismasked := (header[1] & masked) != 0
+
+	if !ws.client && !ismasked {
+		return 0, nil, &CloseError{Code: StatusProtocolError, Reason: "client must mask all frames that it sends to the server"}
+	}
+
+	if ismasked {
+		if ws.client {
+			return 0, nil, &CloseError{Code: StatusProtocolError, Reason: "server must not mask any frames that it sends to the client"}
+		}
+
 		mask, err := ws.readHeader(4)
 		if err != nil {
 			return 0, nil, err
