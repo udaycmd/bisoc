@@ -84,4 +84,5 @@ const (
 	StatusServiceRestart          = 1012
 	StatusTryAgainLater           = 1013
 	StatusTLSHandshake            = 1015
+	noCode                        = 0
 )

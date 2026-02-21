@@ -60,21 +60,43 @@ func isDataFrame(i int) bool {
 
 func validateRSV(b byte) error {
 	if b&(rsv1|rsv2|rsv3) != 0 {
-		return &CloseError{Code: StatusProtocolError, Reason: "rsv bits not negotiated"}
+		return &CloseError{Code: StatusProtocolError, Reason: "rsv bits are set but not negotiated"}
 	}
 
 	return nil
 }
 
+func isValidCloseCode(code int) bool {
+	switch code {
+	case StatusNormalClosure,
+		StatusGoingAway,
+		StatusProtocolError,
+		StatusUnsupportedData,
+		StatusInvalidFramePayloadData,
+		StatusPolicyViolation,
+		StatusMessageTooBig,
+		StatusMandatoryExtension,
+		StatusInternalServerError,
+		StatusServiceRestart,
+		StatusTryAgainLater:
+		return true
+	default:
+		return code >= 3000 && code <= 4999
+	}
+}
+
 // Conn represents a WebSocket connection.
 type Conn struct {
-	conn        net.Conn
-	client      bool
-	subprotocol string
-	writeBuf    []byte
-	br          *bufio.Reader
-	readLimit   int
-	reader      io.Reader
+	conn         net.Conn
+	client       bool
+	subprotocol  string
+	writeBuf     []byte
+	br           *bufio.Reader
+	readLimit    int
+	reader       io.Reader
+	closeHandler func(int, string) error
+	pingHandler  func(string) error
+	pongHandler  func(string) error
 }
 
 // newConn creates a new WebSocket connection [Conn].
@@ -87,13 +109,19 @@ func newConn(conn net.Conn, isClient bool, br *bufio.Reader, writeBuf []byte) *C
 		writeBuf = make([]byte, WriteBufSize)
 	}
 
-	return &Conn{
+	c := &Conn{
 		conn:      conn,
 		client:    isClient,
 		br:        br,
 		writeBuf:  writeBuf,
 		readLimit: ReadLimit,
 	}
+
+	c.OnClose(nil)
+	c.OnPing(nil)
+	c.OnPong(nil)
+
+	return c
 }
 
 // msgReader helps stream a connection with fragmented messages
@@ -199,7 +227,7 @@ func (mr *msgReader) nextFrame() error {
 }
 
 // Sends a websocket message to the connected peer.
-func (ws *Conn) SendMsg(msgKind int, data []byte) error {
+func (ws *Conn) SendMsg(msgKind int, data string) error {
 	// TODO: construct the header
 	return nil
 }
@@ -275,7 +303,7 @@ func (ws *Conn) RecvMsg() (int, []byte, error) {
 		// that the byte stream is not, in fact, a valid UTF-8 stream, that
 		// endpoint must fail the connection.
 		//
-		// Implementation Note: I am only validating this at a message boundary
+		// Implementation Note: I am only validating this at message boundary
 		// and not at every chunk/frame due to induced complexity of the procedure
 		// which is infact is not strictly inforced by the standard.
 		if opcode == TextMsg && !utf8.Valid(payload) {
@@ -285,7 +313,7 @@ func (ws *Conn) RecvMsg() (int, []byte, error) {
 			}
 		}
 
-		return opcode, payload, err
+		return opcode, payload, nil
 	}
 }
 
@@ -365,24 +393,85 @@ func (ws *Conn) readExtensions(header []byte) (uint64, []byte, error) {
 	return l, nil, nil
 }
 
+// handleControlFrame handles subsequent procedures when a specific
+// control message arrives in the connection
 func (ws *Conn) handleControlFrame(opcode int, p []byte) error {
 	switch opcode {
 	case CloseMsg:
 		// RFC 6455 (Section 5.5.1)
 		//
-		// If an endpoint receives a Close frame and did not previously send a
-		// Close frame, the endpoint MUST send a Close frame in response.
-		// (When sending a Close frame in response, the endpoint typically
-		// echos the status code it received.)
-		ws.SendMsg(CloseMsg, p)
-		ws.Close()
-		return io.EOF
+		// If there is a body, the first two bytes of the body MUST be a
+		// 2-byte unsigned integer (in network byte order) representing a
+		// status code defined in Section 7.4. Following the 2-byte integer,
+		// the body MAY contain UTF-8-encoded data indicating the reason.
+		code := noCode
+		reason := ""
+
+		l := len(p)
+		if l == 1 {
+			return &CloseError{Code: StatusProtocolError, Reason: "close message body too short"}
+		}
+
+		if l >= 2 {
+			code = int(binary.BigEndian.Uint16(p[:2]))
+			if !isValidCloseCode(code) {
+				return &CloseError{Code: StatusProtocolError, Reason: "invalid close code sent"}
+			}
+
+			if l > 2 {
+				if !utf8.Valid(p[2:]) {
+					return &CloseError{Code: StatusProtocolError, Reason: "invalid utf8-encoded application data in close message body"}
+				}
+
+				reason = string(p[2:])
+			}
+		}
+
+		ws.closeHandler(code, string(p))
+		return &CloseError{Code: code, Reason: reason}
 	case PingMsg:
-		return nil
+		return ws.pingHandler(string(p))
 	default:
-		// PongMsg
-		return nil
+		return ws.pongHandler(string(p))
 	}
+}
+
+func (ws *Conn) OnClose(f func(code int, body string) error) {
+	if f == nil {
+		f = func(_ int, body string) error {
+			// RFC 6455 (Section 5.5.1)
+			//
+			// If an endpoint receives a Close frame and did not previously send a
+			// Close frame, the endpoint MUST send a Close frame in response.
+			// (When sending a Close frame in response, the endpoint typically
+			// echos the status code it received.)
+			return ws.SendMsg(CloseMsg, body)
+		}
+	}
+
+	ws.closeHandler = f
+}
+
+// attaches a pingHandler to the connection, default behaviour
+// is to send a Pong frame with same appData in response.
+func (ws *Conn) OnPing(f func(appData string) error) {
+	if f == nil {
+		f = func(appData string) error {
+			return ws.SendMsg(PongMsg, appData)
+		}
+	}
+
+	ws.pingHandler = f
+}
+
+// attaches a pongHandler to the connection, default behaviour
+// is to do nothing (unsolicited pong frames)
+func (ws *Conn) OnPong(f func(appData string) error) {
+	if f == nil {
+		f = func(_ string) error { return nil }
+	}
+
+	ws.pongHandler = f
 }
 
 // Subprotocol returns the negotiated protocol for the connection.
@@ -414,7 +503,7 @@ func (ws *Conn) RemoteAddr() net.Addr {
 	return ws.conn.RemoteAddr()
 }
 
-// Close closes the underlying connection.
+// Close closes the underlying tcp connection.
 func (ws *Conn) Close() error {
 	return ws.conn.Close()
 }

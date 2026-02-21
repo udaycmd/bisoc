@@ -46,7 +46,7 @@ func (wss *Server) upgrade(w http.ResponseWriter, r *http.Request) (*Conn, error
 		return nil, wss.error(w, http.StatusMethodNotAllowed, badHandShake+"request method is not GET")
 	}
 
-	if r.Header.Get("Connection") != "upgrade" {
+	if !headerContains(r.Header["Connection"], "upgrade") {
 		return nil, wss.error(w, http.StatusBadRequest, badHandShake+"'Connection' header of the request does not contains 'upgrade'")
 	}
 
@@ -54,7 +54,7 @@ func (wss *Server) upgrade(w http.ResponseWriter, r *http.Request) (*Conn, error
 		return nil, wss.error(w, http.StatusBadRequest, "unsupported websocket version")
 	}
 
-	if r.Header.Get("Upgrade") != "websocket" {
+	if !headerContains(r.Header["Upgrade"], "websocket") {
 		return nil, wss.error(w, http.StatusUpgradeRequired, badHandShake+"'Upgrade' header of request does not contains 'websocket'")
 	}
 
@@ -188,6 +188,16 @@ func subProtocols(r *http.Request) []string {
 		protocols[i] = strings.TrimSpace(protocols[i])
 	}
 	return protocols
+}
+
+func headerContains(values []string, target string) bool {
+	for i := range values {
+		if strings.EqualFold(values[i], target) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Generate 'Sec-WebSocket-Accept' by concatenating the challengeKey with
