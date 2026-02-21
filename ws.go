@@ -90,7 +90,7 @@ type Conn struct {
 	conn         net.Conn
 	client       bool
 	subprotocol  string
-	writeBuf     []byte
+	writeBuf     []byte // this has a minimum size of atleast minBufSize (512 bytes)
 	br           *bufio.Reader
 	readLimit    int
 	reader       io.Reader
@@ -124,7 +124,7 @@ func newConn(conn net.Conn, isClient bool, br *bufio.Reader, writeBuf []byte) *C
 	return c
 }
 
-// msgReader helps stream a connection with fragmented messages
+// msgReader helps read from a connection with fragmented messages
 type msgReader struct {
 	c           *Conn
 	totalRead   int
@@ -141,7 +141,7 @@ func (mr *msgReader) Read(p []byte) (int, error) {
 			return 0, io.EOF
 		}
 
-		if err := mr.nextFrame(); err != nil {
+		if err := mr.readFrame(); err != nil {
 			return 0, err
 		}
 	}
@@ -171,7 +171,7 @@ func (mr *msgReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (mr *msgReader) nextFrame() error {
+func (mr *msgReader) readFrame() error {
 	for {
 		header, err := mr.c.readHeader(2)
 		if err != nil {
@@ -190,7 +190,7 @@ func (mr *msgReader) nextFrame() error {
 				return &CloseError{Code: StatusProtocolError, Reason: "fin bit not set in control frame"}
 			}
 
-			payload, err := mr.c.readPayload(header, true)
+			payload, err := mr.c.readControlPayload(header)
 			if err != nil {
 				return err
 			}
@@ -226,13 +226,122 @@ func (mr *msgReader) nextFrame() error {
 	}
 }
 
-// Sends a websocket message to the connected peer.
-func (ws *Conn) SendMsg(msgKind int, data string) error {
-	// TODO: construct the header
-	return nil
+type msgWriter struct {
+	c      *Conn
+	opcode int
+	closed bool
 }
 
-// Receives a websocket message from the connected peer.
+func (mw *msgWriter) Write(p []byte) (int, error) {
+	if mw.closed {
+		return 0, errInvalidWrite
+	}
+
+	total := 0
+	maxPayloadSize := len(mw.c.writeBuf) - 14
+	for len(p) > 0 {
+		n := min(len(p), maxPayloadSize)
+
+		chunk := p[:n]
+		p = p[n:]
+
+		// send first fragment with FIN = 0
+		if err := mw.c.writeFrame(mw.opcode, false, chunk); err != nil {
+			return total, err
+		}
+
+		total += n
+		// after the first frame, all subsequent fragments must be continuations
+		mw.opcode = continuation
+	}
+
+	return total, nil
+}
+
+func (mw *msgWriter) Close() error {
+	if mw.closed {
+		return nil
+	}
+
+	mw.closed = true
+	return mw.c.writeFrame(mw.opcode, true, nil)
+}
+
+// Sends a single websocket message to the connected peer.
+func (ws *Conn) SendMsg(msgKind int, data string) error {
+	// control messages are directly written to the underlying tcp connection
+	// as they cannot be fragmented
+	if isControlFrame(msgKind) {
+		if len(data) > maxControlFramePayloadSize {
+			return &CloseError{Code: StatusInvalidFramePayloadData, Reason: "control frame payload data too big"}
+		}
+
+		return ws.writeFrame(msgKind, true, []byte(data))
+	}
+
+	mw := &msgWriter{
+		c:      ws,
+		opcode: msgKind,
+	}
+
+	if len(data) == 0 {
+		return errNoData
+	}
+
+	if _, err := mw.Write([]byte(data)); err != nil {
+		return err
+	}
+
+	return mw.Close()
+}
+
+func (ws *Conn) writeFrame(opcode int, final bool, payload []byte) error {
+	b0 := byte(opcode)
+	if final {
+		b0 |= fin
+	}
+	ws.writeBuf[0] = b0
+
+	l := len(payload)
+	b1 := byte(0)
+	if ws.client {
+		b1 |= masked
+	}
+
+	headerBytes := 2
+	switch {
+	case l >= 65536:
+		b1 |= 127
+		binary.BigEndian.PutUint64(ws.writeBuf[2:10], uint64(l))
+		headerBytes = 10
+	case l > 125:
+		b1 |= 126
+		binary.BigEndian.PutUint16(ws.writeBuf[2:4], uint16(l))
+		headerBytes = 4
+	default:
+		b1 |= byte(l)
+		ws.writeBuf[1] = b1
+	}
+
+	maskKey := newMaskKey()
+	if ws.client {
+		copy(ws.writeBuf[headerBytes:], maskKey[:])
+		headerBytes += 4
+	}
+
+	if ws.client {
+		for i := range payload {
+			ws.writeBuf[headerBytes+i] = payload[i] ^ maskKey[i&3]
+		}
+	} else {
+		copy(ws.writeBuf[headerBytes:], payload)
+	}
+
+	_, err := ws.conn.Write(ws.writeBuf[:])
+	return err
+}
+
+// Receives a single websocket message from the connected peer
 func (ws *Conn) RecvMsg() (int, []byte, error) {
 	// clean leftovers
 	if ws.reader != nil {
@@ -263,7 +372,7 @@ func (ws *Conn) RecvMsg() (int, []byte, error) {
 				return 0, nil, &CloseError{Code: StatusProtocolError, Reason: "fin bit not set in control frame"}
 			}
 
-			payload, err := ws.readPayload(header, true)
+			payload, err := ws.readControlPayload(header)
 			if err != nil {
 				return 0, nil, err
 			}
@@ -324,14 +433,15 @@ func (ws *Conn) readHeader(n int) ([]byte, error) {
 	return header, err
 }
 
-func (ws *Conn) readPayload(header []byte, control bool) ([]byte, error) {
+// readControlPayload reads the payload section for a control frame
+func (ws *Conn) readControlPayload(header []byte) ([]byte, error) {
 	l, mask, err := ws.readExtensions(header)
 	if err != nil {
 		return nil, err
 	}
 
-	if control && l > maxControlFramePayloadSize {
-		return nil, &CloseError{Code: StatusInvalidFramePayloadData, Reason: "control payload data too big"}
+	if l > maxControlFramePayloadSize {
+		return nil, &CloseError{Code: StatusInvalidFramePayloadData, Reason: "control frame payload data too big"}
 	}
 
 	p := make([]byte, l)
@@ -420,7 +530,7 @@ func (ws *Conn) handleControlFrame(opcode int, p []byte) error {
 
 			if l > 2 {
 				if !utf8.Valid(p[2:]) {
-					return &CloseError{Code: StatusProtocolError, Reason: "invalid utf8-encoded application data in close message body"}
+					return &CloseError{Code: StatusInvalidFramePayloadData, Reason: "invalid utf8-encoded application data in close message body"}
 				}
 
 				reason = string(p[2:])
@@ -436,6 +546,8 @@ func (ws *Conn) handleControlFrame(opcode int, p []byte) error {
 	}
 }
 
+// attaches a closeHandler to the connection, default behaviour
+// is to send a close frame in response with the same status code
 func (ws *Conn) OnClose(f func(code int, body string) error) {
 	if f == nil {
 		f = func(_ int, body string) error {
@@ -453,7 +565,7 @@ func (ws *Conn) OnClose(f func(code int, body string) error) {
 }
 
 // attaches a pingHandler to the connection, default behaviour
-// is to send a Pong frame with same appData in response.
+// is to send a Pong frame with same appData in response
 func (ws *Conn) OnPing(f func(appData string) error) {
 	if f == nil {
 		f = func(appData string) error {

@@ -1,5 +1,7 @@
 package bisoc
 
+import "errors"
+
 // Globally Unique Identifier (GUID) used for generating
 // 'Sec-WebSocket-Accept' by server during initial handshake.
 // Described in RFC 6455 (Section 1.3).
@@ -53,13 +55,13 @@ const (
 	badHandShake = "bisoc: illegal handshake by client: "
 
 	// Minimum read and write buffer sizes
-	MinBufSize = 512
+	minBufSize = 512
 
 	// Default Read buffer size
 	ReadBufSize = 4096
 
 	// Default Write buffer size
-	WriteBufSize = 4096
+	WriteBufSize = 4096 + minBufSize
 
 	// Max Size of message payload (64 MB)
 	ReadLimit = 67108864
@@ -85,4 +87,9 @@ const (
 	StatusTryAgainLater           = 1013
 	StatusTLSHandshake            = 1015
 	noCode                        = 0
+)
+
+var (
+	errNoData       = errors.New("can't send data frames with empty payload")
+	errInvalidWrite = errors.New("write to a closed writer")
 )

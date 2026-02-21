@@ -104,14 +104,14 @@ func (wss *Server) upgrade(w http.ResponseWriter, r *http.Request) (*Conn, error
 
 	// Setup Read and Write buffers for the server side connection.
 	var br *bufio.Reader
-	if brw.Reader.Size() > MinBufSize {
+	if brw.Reader.Size() > minBufSize {
 		// use the hijacked buffered reader.
 		br = brw.Reader
 	}
 
 	var writeBuf []byte
 	buf := brw.AvailableBuffer()
-	if len(buf) > maxFrameHeaderSize+MinBufSize {
+	if len(buf) > maxFrameHeaderSize+minBufSize {
 		// use the hijacked write buffer.
 		writeBuf = buf
 	}
