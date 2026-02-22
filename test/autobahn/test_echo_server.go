@@ -25,8 +25,6 @@ func echo(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		log.Println("Client sent: ", string(msg), "MsgType: ", t)
-
 		err = c.SendMsg(t, string(msg))
 		if err != nil {
 			log.Printf("Error: %v", err)
@@ -38,7 +36,7 @@ func echo(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	http.HandleFunc("/", echo)
-	if err := http.ListenAndServe("localhost:3000", nil); err != nil {
+	if err := http.ListenAndServe("localhost:8080", nil); err != nil {
 		log.Printf("Error: %v\n", err)
 	}
 }

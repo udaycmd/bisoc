@@ -90,6 +90,5 @@ const (
 )
 
 var (
-	errNoData       = errors.New("can't send data frames with empty payload")
 	errInvalidWrite = errors.New("write to a closed writer")
 )

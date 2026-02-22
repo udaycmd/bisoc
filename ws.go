@@ -86,6 +86,9 @@ func isValidCloseCode(code int) bool {
 }
 
 // Conn represents a WebSocket connection.
+// This websocket connection is not thread-safe,
+// ensure all the methods being called from a single
+// thread/goroutine.
 type Conn struct {
 	conn         net.Conn
 	client       bool
@@ -284,10 +287,6 @@ func (ws *Conn) SendMsg(msgKind int, data string) error {
 		opcode: msgKind,
 	}
 
-	if len(data) == 0 {
-		return errNoData
-	}
-
 	if _, err := mw.Write([]byte(data)); err != nil {
 		return err
 	}
@@ -313,10 +312,12 @@ func (ws *Conn) writeFrame(opcode int, final bool, payload []byte) error {
 	case l >= 65536:
 		b1 |= 127
 		binary.BigEndian.PutUint64(ws.writeBuf[2:10], uint64(l))
+		ws.writeBuf[1] = b1
 		headerBytes = 10
 	case l > 125:
 		b1 |= 126
 		binary.BigEndian.PutUint16(ws.writeBuf[2:4], uint16(l))
+		ws.writeBuf[1] = b1
 		headerBytes = 4
 	default:
 		b1 |= byte(l)
@@ -337,7 +338,7 @@ func (ws *Conn) writeFrame(opcode int, final bool, payload []byte) error {
 		copy(ws.writeBuf[headerBytes:], payload)
 	}
 
-	_, err := ws.conn.Write(ws.writeBuf[:])
+	_, err := ws.conn.Write(ws.writeBuf[:headerBytes+l])
 	return err
 }
 

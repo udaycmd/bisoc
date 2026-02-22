@@ -6,6 +6,8 @@ import (
 	"io"
 )
 
+// TODO: Implement a client side api for the library
+
 var safeRandom = rand.Reader
 
 // Generates a 16 bytes long base64-encoded string which will

@@ -99,6 +99,8 @@ func (wss *Server) upgrade(w http.ResponseWriter, r *http.Request) (*Conn, error
 	}()
 
 	if brw.Reader.Buffered() > 0 {
+		// it is abnormal behaviour for client to send data before completion of the opening
+		// handshake, we must report this as an error to client.
 		return nil, wss.error(w, http.StatusBadRequest, "bisoc does not implement HTTP pipelining")
 	}
 
